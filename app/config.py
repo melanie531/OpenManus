@@ -1,9 +1,9 @@
 import threading
 import tomllib
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 def get_project_root() -> Path:
@@ -18,11 +18,19 @@ WORKSPACE_ROOT = PROJECT_ROOT / "workspace"
 class LLMSettings(BaseModel):
     model: str = Field(..., description="Model name")
     base_url: str = Field(..., description="API base URL")
-    api_key: str = Field(..., description="API key")
+    api_key: Optional[str] = Field(None, description="API key (not required for Bedrock)")
     max_tokens: int = Field(4096, description="Maximum number of tokens per request")
     temperature: float = Field(1.0, description="Sampling temperature")
-    api_type: str = Field(..., description="AzureOpenai or Openai")
-    api_version: str = Field(..., description="Azure Openai version if AzureOpenai")
+    api_type: str = Field(..., description="AzureOpenai, Openai, or bedrock")
+    api_version: Optional[str] = Field(None, description="Azure Openai version if AzureOpenai")
+    region: Optional[str] = Field(None, description="AWS region for Bedrock")
+    profile: Optional[str] = Field(None, description="AWS profile for Bedrock")
+
+    @model_validator(mode="after")
+    def validate_api_key(self) -> "LLMSettings":
+        if self.api_type != "bedrock" and not self.api_key:
+            raise ValueError("api_key is required when api_type is not 'bedrock'")
+        return self
 
 class AppConfig(BaseModel):
     llm: Dict[str, LLMSettings]
@@ -79,7 +87,8 @@ class Config:
             "temperature": base_llm.get("temperature", 1.0),
             "api_type": base_llm.get("api_type", ""),
             "api_version": base_llm.get("api_version", ""),
-
+            "region": base_llm.get("region"),
+            "profile": base_llm.get("profile"),
         }
 
         config_dict = {

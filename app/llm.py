@@ -1,4 +1,5 @@
 from typing import Dict, List, Literal, Optional, Union
+import json
 
 from openai import (
     APIError,
@@ -8,6 +9,7 @@ from openai import (
     RateLimitError,
     AsyncAzureOpenAI
 )
+import boto3
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.config import LLMSettings, config
@@ -40,16 +42,26 @@ class LLM:
             self.api_key = llm_config.api_key
             self.api_version = llm_config.api_version
             self.base_url = llm_config.base_url
+            self.region = llm_config.region
+            self.profile = llm_config.profile
+
             if self.api_type == "azure":
                 self.client = AsyncAzureOpenAI(
                     base_url=self.base_url,
                     api_key=self.api_key,
                     api_version=self.api_version
                 )
+            elif self.api_type == "bedrock":
+                session = boto3.Session(profile_name=self.profile) if self.profile else boto3.Session()
+                self.client = session.client(
+                    service_name='bedrock-runtime',
+                    region_name=self.region
+                )
             else:
                 self.client = AsyncOpenAI(
-                api_key=self.api_key, base_url=self.base_url
-            )
+                    api_key=self.api_key,
+                    base_url=self.base_url
+                )
 
     @staticmethod
     def format_messages(messages: List[Union[dict, Message]]) -> List[dict]:
@@ -110,23 +122,6 @@ class LLM:
         stream: bool = True,
         temperature: Optional[float] = None,
     ) -> str:
-        """
-        Send a prompt to the LLM and get the response.
-
-        Args:
-            messages: List of conversation messages
-            system_msgs: Optional system messages to prepend
-            stream (bool): Whether to stream the response
-            temperature (float): Sampling temperature for the response
-
-        Returns:
-            str: The generated response
-
-        Raises:
-            ValueError: If messages are invalid or response is empty
-            OpenAIError: If API call fails after retries
-            Exception: For unexpected errors
-        """
         try:
             # Format system and user messages
             if system_msgs:
@@ -135,8 +130,53 @@ class LLM:
             else:
                 messages = self.format_messages(messages)
 
+            if self.api_type == "bedrock":
+                # Convert messages to Bedrock format for Claude
+                formatted_messages = []
+                for msg in messages:
+                    if msg.get('role') == 'system':
+                        formatted_messages.append({"role": "user", "content": f"System instruction: {msg['content']}"})
+                    elif msg.get('role') == 'user':
+                        formatted_messages.append({"role": "user", "content": msg['content']})
+                    elif msg.get('role') == 'assistant':
+                        formatted_messages.append({"role": "assistant", "content": msg['content']})
+                    elif msg.get('role') == 'tool':
+                        # Handle tool messages appropriately
+                        formatted_messages.append({"role": "assistant", "content": f"Tool response: {msg['content']}"})
+
+                body = {
+                    "anthropic_version": "bedrock-2023-05-31",
+                    "messages": formatted_messages,
+                    "max_tokens": self.max_tokens,
+                    "temperature": temperature or self.temperature,
+                }
+
+                request_body = {
+                    "modelId": self.model,
+                    "contentType": "application/json",
+                    "accept": "application/json",
+                    "body": json.dumps(body)
+                }
+                
+                try:
+                    response = self.client.invoke_model(**request_body)
+                    response_body = json.loads(response.get('body').read())
+                    
+                    # Extract content from the response
+                    if isinstance(response_body.get('content'), list):
+                        # Handle list of content items
+                        content = ''.join(item.get('text', '') for item in response_body.get('content', []) if item.get('type') == 'text')
+                    else:
+                        # Handle direct string content
+                        content = response_body.get('content', '')
+                    
+                    return content
+                except Exception as e:
+                    logger.error(f"Bedrock API error: {str(e)}")
+                    raise
+
             if not stream:
-                # Non-streaming request
+                # Non-streaming request for OpenAI/Azure
                 response = await self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
@@ -148,7 +188,7 @@ class LLM:
                     raise ValueError("Empty or invalid response from LLM")
                 return response.choices[0].message.content
 
-            # Streaming request
+            # Streaming request for OpenAI/Azure
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
@@ -193,26 +233,6 @@ class LLM:
         temperature: Optional[float] = None,
         **kwargs,
     ):
-        """
-        Ask LLM using functions/tools and return the response.
-
-        Args:
-            messages: List of conversation messages
-            system_msgs: Optional system messages to prepend
-            timeout: Request timeout in seconds
-            tools: List of tools to use
-            tool_choice: Tool choice strategy
-            temperature: Sampling temperature for the response
-            **kwargs: Additional completion arguments
-
-        Returns:
-            ChatCompletionMessage: The model's response
-
-        Raises:
-            ValueError: If tools, tool_choice, or messages are invalid
-            OpenAIError: If API call fails after retries
-            Exception: For unexpected errors
-        """
         try:
             # Validate tool_choice
             if tool_choice not in ["none", "auto", "required"]:
@@ -231,7 +251,106 @@ class LLM:
                     if not isinstance(tool, dict) or "type" not in tool:
                         raise ValueError("Each tool must be a dict with 'type' field")
 
-            # Set up the completion request
+            if self.api_type == "bedrock":
+                # Convert messages to Bedrock format for Claude
+                formatted_messages = []
+                for msg in messages:
+                    if msg.get('role') == 'system':
+                        formatted_messages.append({"role": "user", "content": f"System instruction: {msg['content']}"})
+                    elif msg.get('role') == 'user':
+                        formatted_messages.append({"role": "user", "content": msg['content']})
+                    elif msg.get('role') == 'assistant':
+                        formatted_messages.append({"role": "assistant", "content": msg['content']})
+                    elif msg.get('role') == 'tool':
+                        # Handle tool messages appropriately
+                        formatted_messages.append({"role": "assistant", "content": f"Tool response: {msg['content']}"})
+
+                # For Bedrock, we'll use a special prompt to handle tool-like behavior
+                if tools:
+                    tool_descriptions = []
+                    for tool in tools:
+                        if tool["type"] == "function":
+                            function_info = tool["function"]
+                            tool_descriptions.append(
+                                f"Tool: {function_info['name']}\n"
+                                f"Description: {function_info.get('description', '')}\n"
+                                f"Parameters: {json.dumps(function_info.get('parameters', {}), indent=2)}\n"
+                            )
+                    
+                    # Add tool descriptions to the last user message
+                    last_msg = formatted_messages[-1]
+                    if last_msg["role"] == "user":
+                        last_msg["content"] = (
+                            f"{last_msg['content']}\n\n"
+                            f"Available tools:\n{''.join(tool_descriptions)}\n"
+                            f"If you need to use a tool, format your response as:\n"
+                            f"TOOL_CALL: <tool_name>\n"
+                            f"ARGUMENTS: <json_arguments>"
+                        )
+
+                body = {
+                    "anthropic_version": "bedrock-2023-05-31",
+                    "messages": formatted_messages,
+                    "max_tokens": self.max_tokens,
+                    "temperature": temperature or self.temperature,
+                }
+
+                request_body = {
+                    "modelId": self.model,
+                    "contentType": "application/json",
+                    "accept": "application/json",
+                    "body": json.dumps(body)
+                }
+                
+                try:
+                    response = self.client.invoke_model(**request_body)
+                    response_body = json.loads(response.get('body').read())
+                    
+                    # Extract content from the response
+                    if isinstance(response_body.get('content'), list):
+                        # Handle list of content items
+                        content = ''.join(item.get('text', '') for item in response_body.get('content', []) if item.get('type') == 'text')
+                    else:
+                        # Handle direct string content
+                        content = response_body.get('content', '')
+                    
+                    # Parse the response for tool calls
+                    tool_calls = []
+                    if "TOOL_CALL:" in content:
+                        parts = content.split("TOOL_CALL:", 1)
+                        pre_content = parts[0].strip()
+                        tool_part = parts[1]
+                        
+                        # Try to extract tool name and arguments
+                        try:
+                            tool_lines = tool_part.strip().split("\n")
+                            tool_name = tool_lines[0].strip()
+                            args_text = tool_part.split("ARGUMENTS:", 1)[1].strip()
+                            args = json.loads(args_text)
+                            
+                            tool_calls.append({
+                                "id": "call_0",
+                                "type": "function",
+                                "function": {
+                                    "name": tool_name,
+                                    "arguments": json.dumps(args)
+                                }
+                            })
+                            content = pre_content
+                        except Exception as e:
+                            logger.warning(f"Failed to parse tool call: {e}")
+                    
+                    # Create and return the Message object
+                    return Message(
+                        role="assistant",
+                        content=content,
+                        tool_calls=tool_calls if tool_calls else None
+                    )
+                except Exception as e:
+                    logger.error(f"Bedrock API error: {str(e)}")
+                    raise
+
+            # Set up the completion request for OpenAI/Azure
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,

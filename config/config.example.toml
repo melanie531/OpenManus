@@ -1,12 +1,15 @@
 # Global LLM configuration
-[llm]
-model = "claude-3-5-sonnet"
-base_url = "https://api.openai.com/v1"
-api_key = "sk-..."
-max_tokens = 4096
-temperature = 0.0
 
-# [llm] #AZURE OPENAI:
+# OpenAI Configuration (commented out)
+# [llm]
+# model = "claude-3-5-sonnet"
+# base_url = "https://api.openai.com/v1"
+# api_key = "sk-..."
+# max_tokens = 4096
+# temperature = 0.0
+
+# Azure OpenAI Configuration (commented out)
+# [llm]
 # api_type= 'azure'
 # model = "YOUR_MODEL_NAME" #"gpt-4o-mini"
 # base_url = "{YOUR_AZURE_ENDPOINT.rstrip('/')}/openai/deployments/{AZURE_DEPOLYMENT_ID}"  
@@ -15,7 +18,17 @@ temperature = 0.0
 # temperature = 0.0
 # api_version="AZURE API VERSION" #"2024-08-01-preview"
 
-# Optional configuration for specific LLM models
+# AWS Bedrock Configuration (active)
+[llm]
+model = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+api_type = "bedrock"
+region = "us-west-2"  # Fixed region value
+profile = "default"   # Changed to lowercase as per AWS convention
+base_url = "https://bedrock-runtime.us-west-2.amazonaws.com"
+max_tokens = 8096
+temperature = 0.0
+
+# Vision model configuration
 [llm.vision]
 model = "claude-3-5-sonnet"
 base_url = "https://api.openai.com/v1"
