@@ -20,12 +20,12 @@
 
 # AWS Bedrock Configuration (active)
 [llm]
-model = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+model = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
 api_type = "bedrock"
 region = "us-west-2"  # Fixed region value
 profile = "default"   # Changed to lowercase as per AWS convention
 base_url = "https://bedrock-runtime.us-west-2.amazonaws.com"
-max_tokens = 8096
+max_tokens = 8192
 temperature = 0.0
 
 # Vision model configuration
