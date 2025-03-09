@@ -8,10 +8,14 @@ async def main():
     agent = Manus()
     while True:
         try:
-            prompt = input("Enter your prompt (or 'exit' to quit): ")
-            if prompt.lower() == "exit":
+            prompt = input("Enter your prompt (or 'exit'/'quit' to quit): ")
+            prompt_lower = prompt.lower()
+            if prompt_lower in ["exit", "quit"]:
                 logger.info("Goodbye!")
                 break
+            if not prompt.strip():
+                logger.warning("Skipping empty prompt.")
+                continue
             logger.warning("Processing your request...")
             await agent.run(prompt)
         except KeyboardInterrupt:

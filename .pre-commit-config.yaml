@@ -18,22 +18,22 @@ repos:
       - id: autoflake
         args: [
           --remove-all-unused-imports,
-          --ignore-init-module-imports,  # 忽略 __init__.py 中的导入
+          --ignore-init-module-imports,
           --expand-star-imports,
           --remove-duplicate-keys,
           --remove-unused-variables,
           --recursive,
           --in-place,
-          --exclude=__init__.py,  # 排除 __init__.py 文件
+          --exclude=__init__.py,
         ]
-        files: \.py$  # 只处理 Python 文件
+        files: \.py$
 
   - repo: https://github.com/pycqa/isort
     rev: 5.12.0
     hooks:
       - id: isort
         args: [
-          "--profile", "black",  # 使用 black 兼容的配置
+          "--profile", "black",
           "--filter-files",
           "--lines-after-imports=2",
         ]

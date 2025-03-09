@@ -109,12 +109,14 @@ class PlanningFlow(BaseFlow):
 
         # Create a system message for plan creation
         system_message = Message.system_message(
-            "You are a planning assistant. Your task is to create a detailed plan with clear steps."
+            "You are a planning assistant. Create a concise, actionable plan with clear steps. "
+            "Focus on key milestones rather than detailed sub-steps. "
+            "Optimize for clarity and efficiency."
         )
 
         # Create a user message with the request
         user_message = Message.user_message(
-            f"Create a detailed plan to accomplish this task: {request}"
+            f"Create a reasonable plan with clear steps to accomplish the task: {request}"
         )
 
         # Call LLM with PlanningTool
