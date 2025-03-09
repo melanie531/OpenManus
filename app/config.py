@@ -3,7 +3,7 @@ import tomllib
 from pathlib import Path
 from typing import Dict, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 
 def get_project_root() -> Path:
@@ -18,19 +18,14 @@ WORKSPACE_ROOT = PROJECT_ROOT / "workspace"
 class LLMSettings(BaseModel):
     model: str = Field(..., description="Model name")
     base_url: str = Field(..., description="API base URL")
-    api_key: Optional[str] = Field(None, description="API key (not required for Bedrock)")
+    api_key: Optional[str] = Field(None, description="API key (required for OpenAI and Azure)")
     max_tokens: int = Field(4096, description="Maximum number of tokens per request")
     temperature: float = Field(1.0, description="Sampling temperature")
-    api_type: str = Field(..., description="AzureOpenai, Openai, or bedrock")
-    api_version: Optional[str] = Field(None, description="Azure Openai version if AzureOpenai")
+    api_type: str = Field(..., description="One of: openai, azure, bedrock")
+    api_version: Optional[str] = Field(None, description="Azure OpenAI version if using Azure")
     region: Optional[str] = Field(None, description="AWS region for Bedrock")
     profile: Optional[str] = Field(None, description="AWS profile for Bedrock")
 
-    @model_validator(mode="after")
-    def validate_api_key(self) -> "LLMSettings":
-        if self.api_type != "bedrock" and not self.api_key:
-            raise ValueError("api_key is required when api_type is not 'bedrock'")
-        return self
 
 class AppConfig(BaseModel):
     llm: Dict[str, LLMSettings]

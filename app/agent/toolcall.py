@@ -30,7 +30,7 @@ class ToolCallAgent(ReActAgent):
 
     tool_calls: List[ToolCall] = Field(default_factory=list)
 
-    max_steps: int = 20
+    max_steps: int = 30
 
     async def think(self) -> bool:
         """Process current state and decide next actions using tools"""
@@ -136,14 +136,8 @@ class ToolCallAgent(ReActAgent):
             # Parse arguments
             args = json.loads(command.function.arguments or "{}")
 
-            # # Clean up the code string
-            # code = command.function.arguments.strip()
-            # if not code.endswith('\n'):
-            #     code += '\n'
-
             # Execute the tool
             logger.info(f"🔧 Activating tool: '{name}'...")
-            # logger.info(f"🔧 args: '{code}'...")
             result = await self.available_tools.execute(name=name, tool_input=args)
 
             # Format result for display
@@ -160,7 +154,7 @@ class ToolCallAgent(ReActAgent):
         except json.JSONDecodeError:
             error_msg = f"Error parsing arguments for {name}: Invalid JSON format"
             logger.error(
-                f"📝 Oops! The arguments for '{name}' don't make sense - invalid JSON"
+                f"📝 Oops! The arguments for '{name}' don't make sense - invalid JSON, arguments:{command.function.arguments}"
             )
             return f"Error: {error_msg}"
         except Exception as e:

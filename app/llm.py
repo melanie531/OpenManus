@@ -1,6 +1,8 @@
 from typing import Dict, List, Literal, Optional, Union
 import json
 import re
+import boto3
+from datetime import datetime
 
 from openai import (
     APIError,
@@ -11,7 +13,6 @@ from openai import (
     RateLimitError,
 )
 from tenacity import retry, stop_after_attempt, wait_random_exponential
-import boto3
 
 from app.config import LLMSettings, config
 from app.logger import logger  # Assuming a logger is set up in your app
@@ -401,7 +402,6 @@ class LLM:
                                     
                                     # Try to parse JSON arguments with fallback strategies
                                     args = self._parse_json_arguments(args_text)
-                                    logger.debug(f"type of args: {type(args)}")
                                     if args:
                                         logger.debug(f"Successfully parsed tool {tool_name} arguments: {args}")
                                         
@@ -476,7 +476,6 @@ class LLM:
         """Clean and prepare JSON text for parsing."""
         # First handle Python string formatting
         def handle_datetime_format(match):
-            from datetime import datetime
             format_str = match.group(1) if match.group(1) else "%Y-%m-%d"
             return datetime.now().strftime(format_str)
 
@@ -484,12 +483,29 @@ class LLM:
         text = re.sub(r'datetime\.now\(\)\.strftime\(["\']([^"\']*)["\']?\)', handle_datetime_format, text)
         text = re.sub(r'datetime\.now\(\)', lambda x: f'"{datetime.now().strftime("%Y-%m-%d")}"', text)
         
+        # Handle string concatenation with datetime
+        def handle_string_concat(match):
+            parts = match.group(0).split('+')
+            result = []
+            for part in parts:
+                part = part.strip()
+                if 'datetime.now()' in part:
+                    # Replace datetime.now() calls
+                    part = re.sub(r'datetime\.now\(\)\.strftime\(["\']([^"\']*)["\']?\)', handle_datetime_format, part)
+                    part = re.sub(r'datetime\.now\(\)', lambda x: datetime.now().strftime("%Y-%m-%d"), part)
+                # Remove quotes around parts
+                part = part.strip('"\'')
+                result.append(part)
+            return '"' + ''.join(result) + '"'
+        
+        # Replace string concatenation
+        text = re.sub(r'"[^"]*?"(?:\s*\+\s*(?:datetime\.now\(\)[^"]*?|"[^"]*?"))+', handle_string_concat, text)
+
         # Handle string format() calls
         def handle_format_call(match):
             content = match.group(1)
             # If there's a format() call, evaluate it
             if content.endswith(".format(datetime.now().strftime('%Y-%m-%d'))"):
-                from datetime import datetime
                 content = content[:-len(".format(datetime.now().strftime('%Y-%m-%d'))")].replace("{}", datetime.now().strftime("%Y-%m-%d"))
             return content
 
@@ -579,7 +595,6 @@ class LLM:
                     if isinstance(value, str):
                         # Handle any remaining format strings or datetime calls
                         if "{}" in value and ".format(" in value:
-                            from datetime import datetime
                             value = value.replace("{}", datetime.now().strftime("%Y-%m-%d"))
                             value = re.sub(r'\.format\([^)]*\)', '', value)
                         if key == "code":
@@ -587,27 +602,48 @@ class LLM:
                             code = value.strip('"\'')
                             # Unescape any escaped quotes
                             code = code.replace('\\"', '"')
+                            
+                            # Handle triple-quoted strings
+                            triple_quote_pattern = r'"""(.*?)"""'
+                            matches = re.findall(triple_quote_pattern, code, re.DOTALL)
+                            if matches:
+                                code = matches[0].strip()
+                            
                             # Split into lines and process
-                            lines = code.split('\\n')
-                            # Remove common leading whitespace
-                            if lines:
-                                # Find minimum indentation from non-empty lines
-                                min_indent = float('inf')
-                                for line in lines:
-                                    if line.strip():
-                                        indent = len(line) - len(line.lstrip())
-                                        min_indent = min(min_indent, indent) if indent < min_indent else min_indent
-                                if min_indent == float('inf'):
-                                    min_indent = 0
-                                # Remove common indentation
-                                lines = [line[min_indent:] if line.strip() else '' for line in lines]
-                                # Remove leading/trailing empty lines
-                                while lines and not lines[0].strip():
-                                    lines.pop(0)
-                                while lines and not lines[-1].strip():
-                                    lines.pop()
-                                # Join lines back together
-                                value = '\n'.join(lines)
+                            lines = []
+                            for line in code.split('\n'):
+                                # Remove extra spaces around the line
+                                line = line.strip()
+                                
+                                # Skip empty lines
+                                if not line:
+                                    lines.append('')
+                                    continue
+                                
+                                # Handle import statements that might be concatenated
+                                if line.startswith('import ') and ' from ' in line:
+                                    # Split concatenated imports
+                                    import_parts = line.split(' from ')
+                                    current_imports = import_parts[0].replace('import ', '').split()
+                                    for imp in current_imports:
+                                        if imp.strip():
+                                            lines.append(f"import {imp.strip()}")
+                                    continue
+                                
+                                # Handle multiple imports on one line
+                                if line.startswith('import ') and ',' in line:
+                                    imports = line.replace('import ', '').split(',')
+                                    for imp in imports:
+                                        if imp.strip():
+                                            lines.append(f"import {imp.strip()}")
+                                    continue
+                                
+                                # Add the line with proper indentation
+                                lines.append(line)
+                            
+                            # Join lines back together
+                            value = '\n'.join(lines)
+                            
                         obj[key] = value
                     elif isinstance(value, (dict, list)):
                         process_code_value(value)

@@ -15,7 +15,7 @@ def define_log_level(print_level="INFO", logfile_level="DEBUG", name: str = None
     _print_level = print_level
 
     current_date = datetime.now()
-    formatted_date = current_date.strftime("%Y%m%d")
+    formatted_date = current_date.strftime("%Y%m%d%H%M%S")
     log_name = (
         f"{name}_{formatted_date}" if name else formatted_date
     )  # name a log with prefix name
